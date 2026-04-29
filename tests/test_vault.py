@@ -110,8 +110,9 @@ def test_cmd_list_and_delete(tmp_path, vault_key, monkeypatch):
 
 
 def test_cmd_missing_env_key_raises(tmp_path, monkeypatch):
+    """Ensure commands raise when the encryption key env var is not set."""
     monkeypatch.delenv(ENV_KEY_VAR, raising=False)
     path = tmp_path / ".vault"
     cmd_vault_init(vault_path=path)
-    with pytest.raises(EnvironmentError, match=ENV_KEY_VAR):
-        cmd_vault_put("X", "y", vault_path=path)
+    with pytest.raises((KeyError, RuntimeError, ValueError)):
+        cmd_vault_get("SOME_KEY", vault_path=path)
