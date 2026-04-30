@@ -1,103 +1,106 @@
-"""copy_key: copy a key (optionally renamed) from one .env file to another."""
+"""copy_key: copy a single key from one .env file to another."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .parser import parse_env_file, EnvEntry
-from .serializer import write_env_file, merge_entries
-from .redactor import Redactor, RedactionConfig
+from envoy_local.parser import parse_env_file, EnvEntry
+from envoy_local.serializer import write_env_file, merge_entries
 
 
 @dataclass
 class CopyKeyResult:
     ok: bool
+    message: str
     source_key: str
     dest_key: str
-    value: Optional[str]
-    skipped: bool
-    message: str
+    source_file: Path
+    dest_file: Path
+    skipped: bool = False
 
     def summary(self) -> str:
-        return self.message
+        if self.skipped:
+            return (
+                f"skipped: '{self.dest_key}' already exists in {self.dest_file}"
+            )
+        return (
+            f"copied '{self.source_key}' -> '{self.dest_key}' "
+            f"from {self.source_file} to {self.dest_file}"
+        )
 
 
 def copy_key(
-    source_path: Path,
-    dest_path: Path,
+    source: Path,
+    dest: Path,
     key: str,
-    *,
     dest_key: Optional[str] = None,
     overwrite: bool = False,
-    redact: bool = False,
-    redaction_config: Optional[RedactionConfig] = None,
 ) -> CopyKeyResult:
-    """Copy *key* from *source_path* into *dest_path*.
+    """Copy *key* from *source* .env to *dest* .env.
 
     Parameters
     ----------
-    source_path:  file to read the key from.
-    dest_path:    file to write the key into (created if absent).
-    key:          key name in the source file.
-    dest_key:     key name to use in the destination (defaults to *key*).
-    overwrite:    replace the key if it already exists in the destination.
-    redact:       if True the value is replaced with an empty string when
-                  the key is detected as a secret.
-    redaction_config: custom redaction settings (uses defaults when None).
+    source:    Path to the source .env file.
+    dest:      Path to the destination .env file (created if absent).
+    key:       Key name to read from *source*.
+    dest_key:  Key name to write in *dest*. Defaults to *key*.
+    overwrite: If False and the key already exists in *dest*, abort.
     """
-    target_key = dest_key or key
+    resolved_dest_key = dest_key or key
 
-    if not source_path.exists():
-        return CopyKeyResult(
-            ok=False, source_key=key, dest_key=target_key, value=None,
-            skipped=True, message=f"Source file not found: {source_path}"
-        )
-
-    src_result = parse_env_file(source_path)
+    src_result = parse_env_file(source)
     src_dict = {e.key: e for e in src_result.entries if e.key}
 
     if key not in src_dict:
         return CopyKeyResult(
-            ok=False, source_key=key, dest_key=target_key, value=None,
-            skipped=True, message=f"Key '{key}' not found in {source_path}"
+            ok=False,
+            message=f"key '{key}' not found in {source}",
+            source_key=key,
+            dest_key=resolved_dest_key,
+            source_file=source,
+            dest_file=dest,
         )
 
     src_entry: EnvEntry = src_dict[key]
-    value = src_entry.value or ""
 
-    if redact:
-        cfg = redaction_config or RedactionConfig()
-        redactor = Redactor(cfg)
-        if redactor.is_secret(key):
-            value = ""
+    # Load existing destination entries (or start empty).
+    if dest.exists():
+        dst_result = parse_env_file(dest)
+        dst_entries = list(dst_result.entries)
+    else:
+        dst_entries = []
 
-    dest_entries = []
-    if dest_path.exists():
-        dest_result = parse_env_file(dest_path)
-        dest_entries = dest_result.entries
+    dst_keys = {e.key for e in dst_entries if e.key}
 
-    dest_dict = {e.key: e for e in dest_entries if e.key}
-
-    if target_key in dest_dict and not overwrite:
+    if resolved_dest_key in dst_keys and not overwrite:
         return CopyKeyResult(
-            ok=True, source_key=key, dest_key=target_key, value=value,
+            ok=False,
+            message=f"key '{resolved_dest_key}' already exists in {dest}",
+            source_key=key,
+            dest_key=resolved_dest_key,
+            source_file=source,
+            dest_file=dest,
             skipped=True,
-            message=f"Key '{target_key}' already exists in destination (use overwrite=True to replace)"
         )
 
+    # Build the new entry (rename key if needed).
     new_entry = EnvEntry(
-        key=target_key,
-        value=value,
+        key=resolved_dest_key,
+        value=src_entry.value,
         comment=src_entry.comment,
-        original_line=f"{target_key}={value}",
+        original_line=None,
     )
-    merged = merge_entries(dest_entries, [new_entry], overwrite=overwrite)
-    write_env_file(dest_path, merged)
 
-    action = "overwrote" if (target_key in dest_dict and overwrite) else "added"
+    incoming = [new_entry]
+    merged = merge_entries(dst_entries, incoming, overwrite=overwrite)
+    write_env_file(dest, merged)
+
     return CopyKeyResult(
-        ok=True, source_key=key, dest_key=target_key, value=value,
-        skipped=False,
-        message=f"Key '{key}' {action} as '{target_key}' in {dest_path}"
+        ok=True,
+        message="ok",
+        source_key=key,
+        dest_key=resolved_dest_key,
+        source_file=source,
+        dest_file=dest,
     )
