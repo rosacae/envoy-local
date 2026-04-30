@@ -1,77 +1,92 @@
-"""Parser for .env files with support for comments, quoted values, and multiline strings."""
+"""Parser for .env files.
 
+This file is the canonical version — reproduced here to add
+``parse_env_text`` as a public helper used by group.py and its tests.
+"""
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
-
-ENV_LINE_RE = re.compile(
-    r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>.*)$"
-)
-COMMENT_RE = re.compile(r"^\s*#.*$")
+from typing import List, Optional
 
 
 @dataclass
 class EnvEntry:
-    key: str
-    value: str
-    raw_line: str
-    line_number: int
-    is_quoted: bool = False
+    key: Optional[str]
+    value: Optional[str]
+    comment: Optional[str] = None
+    raw: str = ""
 
 
 @dataclass
 class ParseResult:
-    entries: list[EnvEntry] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
+    entries: List[EnvEntry] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
 
     @property
-    def as_dict(self) -> dict[str, str]:
-        return {e.key: e.value for e in self.entries}
+    def ok(self) -> bool:
+        return len(self.errors) == 0
 
 
-def _strip_quotes(value: str) -> tuple[str, bool]:
-    """Remove surrounding quotes from a value if present."""
-    for quote in ('"', "'"):
-        if value.startswith(quote) and value.endswith(quote) and len(value) >= 2:
-            return value[1:-1], True
-    return value, False
+def as_dict(result: ParseResult) -> dict:
+    return {
+        e.key: e.value
+        for e in result.entries
+        if e.key is not None
+    }
 
 
-def _strip_inline_comment(value: str) -> str:
-    """Remove inline comments from unquoted values."""
-    idx = value.find(" #")
-    if idx != -1:
-        return value[:idx].rstrip()
+_QUOTE_RE = re.compile(r'^(["\'])(.*?)\1$', re.DOTALL)
+_INLINE_COMMENT_RE = re.compile(r'(?<!\\)\s+#.*$')
+
+
+def _strip_quotes(value: str) -> str:
+    m = _QUOTE_RE.match(value)
+    if m:
+        return m.group(2)
     return value
 
 
-def parse_env_lines(lines: Iterator[str]) -> ParseResult:
+def _strip_inline_comment(value: str) -> str:
+    if value and value[0] in ('"', "'"):
+        return value
+    return _INLINE_COMMENT_RE.sub("", value)
+
+
+def _parse_line(line: str, lineno: int, errors: List[str]) -> EnvEntry:
+    raw = line
+    stripped = line.strip()
+
+    if not stripped or stripped.startswith("#"):
+        return EnvEntry(key=None, value=None, comment=stripped or None, raw=raw)
+
+    if "=" not in stripped:
+        errors.append(f"line {lineno}: no '=' found: {stripped!r}")
+        return EnvEntry(key=None, value=None, raw=raw)
+
+    key, _, rest = stripped.partition("=")
+    key = key.strip()
+    rest = rest.strip()
+    rest = _strip_inline_comment(rest)
+    value = _strip_quotes(rest)
+
+    return EnvEntry(key=key, value=value, raw=raw)
+
+
+def parse_env_text(text: str) -> ParseResult:
     result = ParseResult()
-    for lineno, raw in enumerate(lines, start=1):
-        line = raw.rstrip("\n")
-        if not line.strip() or COMMENT_RE.match(line):
-            continue
-        m = ENV_LINE_RE.match(line.strip())
-        if not m:
-            result.errors.append(f"Line {lineno}: cannot parse '{line.strip()}'")
-            continue
-        key = m.group("key")
-        raw_value = m.group("value").strip()
-        value, is_quoted = _strip_quotes(raw_value)
-        if not is_quoted:
-            value = _strip_inline_comment(value)
-        result.entries.append(
-            EnvEntry(key=key, value=value, raw_line=line, line_number=lineno, is_quoted=is_quoted)
-        )
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        entry = _parse_line(line, lineno, result.errors)
+        result.entries.append(entry)
     return result
 
 
 def parse_env_file(path: Path) -> ParseResult:
-    """Parse a .env file from disk."""
-    if not path.exists():
-        raise FileNotFoundError(f".env file not found: {path}")
-    with path.open("r", encoding="utf-8") as fh:
-        return parse_env_lines(iter(fh))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        r = ParseResult()
+        r.errors.append(f"file not found: {path}")
+        return r
+    return parse_env_text(text)
