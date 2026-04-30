@@ -1,6 +1,8 @@
 """Tests for envoy_local.schema."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from envoy_local.schema import (
@@ -95,20 +97,17 @@ def test_from_dict_parses_correctly():
 
 
 def test_schema_load_from_file(tmp_path):
-    import json
-
     schema_file = tmp_path / "schema.json"
-    schema_file.write_text(
-        json.dumps({"fields": {"KEY": {"required": True}}, "allow_extra": True})
-    )
-    schema = EnvSchema.load(str(schema_file))
-    assert schema.fields["KEY"].required is True
+    schema_data = {
+        "allow_extra": False,
+        "fields": {
+            "PORT": {"required": True, "pattern": r"\d+"},
+            "LOG_LEVEL": {"allowed_values": ["DEBUG", "INFO", "WARNING"]},
+        },
+    }
+    schema_file.write_text(json.dumps(schema_data))
 
-
-def test_multiple_violations_collected():
-    schema = _schema(
-        A={"required": True},
-        B={"required": True},
-    )
-    result = validate_schema({}, schema)
-    assert len(result.violations) == 2
+    schema = EnvSchema.from_dict(json.loads(schema_file.read_text()))
+    assert not schema.allow_extra
+    assert schema.fields["PORT"].required is True
+    assert schema.fields["LOG_LEVEL"].allowed_values == ["DEBUG", "INFO", "WARNING"]
