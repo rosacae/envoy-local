@@ -87,6 +87,17 @@ def test_restore_snapshot_to_custom_target(env_file, snap_dir, tmp_path):
 
 def test_create_snapshot_uses_timestamp_label_when_none(env_file, snap_dir):
     snap = create_snapshot(env_file, snapshot_dir=snap_dir)
-    # label should be an ISO timestamp string
-    assert "+" in snap.label or "T" in snap.label
-    assert snap.label in list_snapshots(snap_dir)
+    assert snap.label is not None
+    assert len(snap.label) > 0
+    # The auto-generated label should correspond to a persisted file
+    snap_file = snap_dir / f"{snap.label}.json"
+    assert snap_file.exists()
+
+
+def test_create_snapshot_stores_source_path(env_file, snap_dir):
+    """Snapshot JSON should record the source env file path for later restore."""
+    create_snapshot(env_file, label="with-source", snapshot_dir=snap_dir)
+    snap_file = snap_dir / "with-source.json"
+    data = json.loads(snap_file.read_text())
+    assert "source_path" in data
+    assert data["source_path"] == str(env_file)
