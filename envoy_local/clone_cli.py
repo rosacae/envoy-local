@@ -10,16 +10,26 @@ from .encrypt import _load_key  # reuse existing key-loading helper if present
 
 
 def _load_key_safe(key_path: Optional[str]) -> Optional[bytes]:
-    """Return raw key bytes or None when no path given."""
+    """Return raw key bytes or None when no path given.
+
+    Returns None if *key_path* is falsy.  Raises ``FileNotFoundError`` when a
+    path is provided but the file does not exist, so the caller gets a clear
+    error instead of silently skipping encryption.
+    """
     if not key_path:
         return None
     path = Path(key_path)
     if not path.exists():
-        return None
+        raise FileNotFoundError(f"Key file not found: {key_path}")
     return path.read_bytes().strip()
 
 
 def cmd_clone(ns: argparse.Namespace) -> int:
+    """Entry point for the ``clone`` sub-command.
+
+    Returns an exit code: 0 on success, 1 on unexpected error, 2 when a
+    required file is missing.
+    """
     source = Path(ns.source)
     destination = Path(ns.destination)
 
@@ -27,7 +37,11 @@ def cmd_clone(ns: argparse.Namespace) -> int:
         print(f"Error: source file not found: {source}")
         return 2
 
-    encrypt_key = _load_key_safe(getattr(ns, "key", None))
+    try:
+        encrypt_key = _load_key_safe(getattr(ns, "key", None))
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}")
+        return 2
 
     options = CloneOptions(
         redact_secrets=getattr(ns, "redact", False),
