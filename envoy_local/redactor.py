@@ -63,3 +63,14 @@ class Redactor:
             else:
                 result.append(entry)
         return result
+
+    def secret_keys(self, env: dict[str, str]) -> list[str]:
+        """Return a sorted list of keys in *env* that match a secret pattern.
+
+        Useful for auditing which keys would be redacted without performing
+        the actual redaction.
+        """
+        return sorted(
+            key for key, value in env.items()
+            if self.config.is_secret(key) and len(value) >= self.config.min_value_length
+        )
