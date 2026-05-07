@@ -72,6 +72,16 @@ class CompareResult:
     def equal(self) -> List[CompareEntry]:
         return [e for e in self.entries if not (e.only_in_left or e.only_in_right or e.differs)]
 
+    def summary(self) -> Dict[str, int]:
+        """Return a count summary of each difference category."""
+        return {
+            "left_only": len(self.left_only()),
+            "right_only": len(self.right_only()),
+            "changed": len(self.changed()),
+            "equal": len(self.equal()),
+            "total": len(self.entries),
+        }
+
 
 def compare_parse_results(left: ParseResult, right: ParseResult) -> CompareResult:
     from envoy_local.parser import as_dict
@@ -91,6 +101,15 @@ def compare_parse_results(left: ParseResult, right: ParseResult) -> CompareResul
 
 
 def compare_env_files(left_path: Path, right_path: Path) -> CompareResult:
+    """Parse two .env files from disk and return their comparison result.
+
+    Raises:
+        FileNotFoundError: If either path does not exist.
+    """
+    if not left_path.exists():
+        raise FileNotFoundError(f"Left file not found: {left_path}")
+    if not right_path.exists():
+        raise FileNotFoundError(f"Right file not found: {right_path}")
     left = parse_env_file(left_path)
     right = parse_env_file(right_path)
     return compare_parse_results(left, right)
