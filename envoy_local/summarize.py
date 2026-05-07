@@ -33,6 +33,14 @@ class SummarizeResult:
             "empty_keys": self.empty_keys,
         }
 
+    def has_issues(self) -> bool:
+        """Return True if the summary contains any notable issues.
+
+        Issues include duplicate keys, empty values, or secret keys
+        that may warrant review before committing the file.
+        """
+        return bool(self.duplicate_keys or self.empty_keys or self.secret_keys)
+
 
 def summarize_parse_result(
     result: ParseResult,
